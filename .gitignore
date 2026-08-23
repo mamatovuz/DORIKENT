@@ -1,0 +1,15 @@
+# Maxfiy sozlamalar — HECH QACHON commit qilinmasin
+.env
+
+# Ma'lumotlar bazasi
+*.db
+*.db-journal
+*.db-wal
+
+# Python
+venv/
+__pycache__/
+*.pyc
+_t.py
+t2.db
+test_tmp.db
