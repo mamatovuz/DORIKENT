@@ -5,6 +5,8 @@
 *.db
 *.db-journal
 *.db-wal
+# seed.db — Railway volume'ini birinchi deploy'da to'ldirish uchun (commit qilinadi)
+!seed.db
 
 # Python
 venv/

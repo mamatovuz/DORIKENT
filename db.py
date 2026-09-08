@@ -1,11 +1,30 @@
 """SQLite ma'lumotlar bazasi qatlami (aiosqlite bilan)."""
+import os
+import shutil
+import logging
 import aiosqlite
 from datetime import datetime
 from typing import Optional
 
 import config
 
+log = logging.getLogger("db")
+
 _db: Optional[aiosqlite.Connection] = None
+
+
+def _seed_if_needed() -> None:
+    """Railway (yoki boshqa) volume birinchi marta bo'sh bo'lsa, seed.db dan
+    ma'lumotlarni ko'chiradi. Agar DB_PATH allaqachon mavjud bo'lsa — tegmaydi,
+    ya'ni jonli ma'lumotlar hech qachon ustidan yozilmaydi."""
+    target = config.DB_PATH
+    seed = os.path.join(os.path.dirname(__file__), "seed.db")
+    if os.path.exists(target):
+        return  # jonli baza bor — hech narsa qilmaymiz
+    if not os.path.exists(seed):
+        return  # seed yo'q — bo'sh bazadan boshlanadi
+    shutil.copyfile(seed, target)
+    log.info("Seed ma'lumotlar ko'chirildi: %s -> %s", seed, target)
 
 
 async def get_db() -> aiosqlite.Connection:
@@ -113,6 +132,7 @@ async def _migrate(db):
 
 
 async def init_db():
+    _seed_if_needed()
     db = await get_db()
     await db.executescript(SCHEMA)
     await db.commit()
