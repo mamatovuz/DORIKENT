@@ -35,6 +35,12 @@ DEFAULT_SHOW_RESULT = _int("DEFAULT_SHOW_RESULT", 1)
 
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 
+# Agar DB_PATH papka ichida bo'lsa (masalan Railway volume: /data/bot.db),
+# o'sha papkani avtomatik yaratamiz.
+_db_dir = os.path.dirname(DB_PATH)
+if _db_dir:
+    os.makedirs(_db_dir, exist_ok=True)
+
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
