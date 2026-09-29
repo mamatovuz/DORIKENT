@@ -55,6 +55,7 @@ def admin_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📊 Natijalar"), KeyboardButton(text="📤 Test yuborish")],
             [KeyboardButton(text="⚙️ Sozlamalar"), KeyboardButton(text="🤖 AI holati")],
             [KeyboardButton(text="👑 Adminlar"), KeyboardButton(text="📖 Qo'llanma")],
+            [KeyboardButton(text="🔗 Recruitment")],
         ],
         resize_keyboard=True,
     )

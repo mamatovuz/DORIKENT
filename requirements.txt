@@ -7,3 +7,8 @@ openai==1.54.4
 # openai 1.54.x httpx 0.28 bilan mos emas ("proxies" xatosi) -> pin
 httpx==0.27.2
 fpdf2==2.8.8
+# ==== Recruitment API (2-bot integratsiyasi) ====
+# FastAPI + uvicorn API server; httpx (yuqorida) 2-botga natija yuborish uchun.
+fastapi==0.115.5
+uvicorn==0.32.1
+pydantic==2.9.2

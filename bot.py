@@ -17,7 +17,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import config
 import db
-from handlers import employee_router, test_taking_router, admin_router
+from handlers import (
+    employee_router, test_taking_router, admin_router, recruitment_router,
+)
+from services import result_sync
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,10 +44,11 @@ async def main():
     )
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Tartib: admin (filtrli) -> employee -> test topshirish
+    # Tartib: admin (filtrli) -> employee -> test topshirish -> recruitment
     dp.include_router(admin_router)
     dp.include_router(employee_router)
     dp.include_router(test_taking_router)
+    dp.include_router(recruitment_router)
 
     me = await bot.get_me()
     log.info("Bot ishga tushdi: @%s", me.username)
@@ -52,7 +56,21 @@ async def main():
     log.info("AI: %s", " | ".join((await ai_service.ai_status()).splitlines()))
 
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+
+    # aiogram polling + FastAPI API server + natija-sync fon tsikli — birga.
+    tasks = [asyncio.create_task(dp.start_polling(bot))]
+
+    if config.API_ENABLED:
+        if not config.TEST_API_SECRET:
+            log.warning("⚠️ TEST_API_SECRET bo'sh — API so'rovlari 503 qaytaradi. "
+                        ".env da TEST_API_SECRET ni to'ldiring.")
+        from api import run_api
+        tasks.append(asyncio.create_task(run_api()))
+        tasks.append(asyncio.create_task(result_sync.run_sync_loop()))
+    else:
+        log.info("API_ENABLED=0 — faqat Telegram bot ishlaydi.")
+
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

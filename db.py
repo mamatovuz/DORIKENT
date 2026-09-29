@@ -108,14 +108,42 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- ====== RECRUITMENT (2-bot integratsiyasi) ======
+-- 2-bot API orqali tayinlagan testlar. 1-bot va 2-bot bazalari BIRLASHMAYDI;
+-- bu jadval faqat 2-botdan kelgan identifikatorlarni saqlaydi.
+CREATE TABLE IF NOT EXISTS test_assignments (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_id           INTEGER NOT NULL,      -- 2-botdagi nomzod ID
+    telegram_id            INTEGER NOT NULL,      -- nomzodning Telegram ID
+    vacancy_id             INTEGER,               -- 2-botdagi vakansiya ID
+    test_id                INTEGER NOT NULL,      -- 1-botdagi test ID
+    external_application_id INTEGER,              -- 2-botdagi ariza ID
+    status                 TEXT NOT NULL DEFAULT 'assigned',  -- assigned|started|completed|expired|cancelled
+    assigned_at            TEXT,
+    started_at             TEXT,
+    completed_at           TEXT,
+    result_id              INTEGER,
+    FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_assignments_tg ON test_assignments(telegram_id);
+CREATE INDEX IF NOT EXISTS idx_assignments_status ON test_assignments(status);
 """
+
+
+async def _add_missing_columns(db, table: str, columns: dict[str, str]) -> None:
+    """Jadvalga yetishmayotgan ustunlarni qo'shadi (mavjud ma'lumotlarga tegmaydi)."""
+    async with db.execute(f"PRAGMA table_info({table})") as cur:
+        existing = {r["name"] for r in await cur.fetchall()}
+    for name, ddl in columns.items():
+        if name not in existing:
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
 async def _migrate(db):
     """Eski bot.db uchun yetishmayotgan ustunlarni qo'shadi."""
-    async with db.execute("PRAGMA table_info(users)") as cur:
-        cols = {r["name"] for r in await cur.fetchall()}
-    add = {
+    await _add_missing_columns(db, "users", {
         "first_name": "TEXT",
         "last_name": "TEXT",
         "gender": "TEXT",
@@ -124,10 +152,28 @@ async def _migrate(db):
         "photo_file_id": "TEXT",
         "is_registered": "INTEGER NOT NULL DEFAULT 0",
         "last_profile_edit": "TEXT",
-    }
-    for name, ddl in add.items():
-        if name not in cols:
-            await db.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
+    })
+
+    # Recruitment: testlarga ixtiyoriy tavsif (API contract uchun).
+    await _add_missing_columns(db, "tests", {
+        "description": "TEXT",
+    })
+
+    # Recruitment: results jadvaliga qo'shimcha maydonlar. Mavjud xodimlar
+    # testlari uchun bu ustunlar NULL bo'lib qoladi — eski oqim buzilmaydi.
+    await _add_missing_columns(db, "results", {
+        "candidate_id": "INTEGER",
+        "telegram_id": "INTEGER",
+        "vacancy_id": "INTEGER",
+        "assignment_id": "INTEGER",
+        "external_application_id": "INTEGER",
+        "started_at": "TEXT",
+        "completed_at": "TEXT",
+        # Natijani 2-botga yuborish holati: NULL=xodim testi, aks holda pending|sent|failed
+        "sync_status": "TEXT",
+        "sync_attempts": "INTEGER NOT NULL DEFAULT 0",
+        "next_sync_at": "TEXT",
+    })
     await db.commit()
 
 
@@ -487,3 +533,148 @@ async def all_settings() -> dict:
     async with db.execute("SELECT key, value FROM settings") as cur:
         rows = await cur.fetchall()
         return {r["key"]: r["value"] for r in rows}
+
+
+# ==================== RECRUITMENT: TEST ASSIGNMENTS ====================
+async def create_test_assignment(candidate_id: int, telegram_id: int, vacancy_id,
+                                 test_id: int, external_application_id) -> int:
+    """2-bot tayinlagan testni saqlaydi. assignment_id qaytaradi."""
+    db = await get_db()
+    cur = await db.execute(
+        """INSERT INTO test_assignments
+             (candidate_id, telegram_id, vacancy_id, test_id, external_application_id,
+              status, assigned_at)
+           VALUES (?,?,?,?,?, 'assigned', ?)""",
+        (candidate_id, telegram_id, vacancy_id, test_id, external_application_id, _now()),
+    )
+    await db.commit()
+    return cur.lastrowid
+
+
+async def get_test_assignment(assignment_id: int):
+    db = await get_db()
+    async with db.execute(
+        "SELECT * FROM test_assignments WHERE id=?", (assignment_id,)
+    ) as cur:
+        return await cur.fetchone()
+
+
+async def set_assignment_started(assignment_id: int):
+    db = await get_db()
+    await db.execute(
+        "UPDATE test_assignments SET status='started', started_at=? WHERE id=?",
+        (_now(), assignment_id),
+    )
+    await db.commit()
+
+
+async def set_assignment_completed(assignment_id: int, result_id: int):
+    db = await get_db()
+    await db.execute(
+        "UPDATE test_assignments SET status='completed', completed_at=?, result_id=? WHERE id=?",
+        (_now(), result_id, assignment_id),
+    )
+    await db.commit()
+
+
+async def set_assignment_status(assignment_id: int, status: str):
+    db = await get_db()
+    await db.execute(
+        "UPDATE test_assignments SET status=? WHERE id=?", (status, assignment_id)
+    )
+    await db.commit()
+
+
+async def list_assignments_for_telegram(telegram_id: int):
+    db = await get_db()
+    async with db.execute(
+        "SELECT * FROM test_assignments WHERE telegram_id=? ORDER BY id DESC",
+        (telegram_id,),
+    ) as cur:
+        return await cur.fetchall()
+
+
+async def recruitment_assignment_counts() -> dict:
+    """Assignment holatlari bo'yicha sanoq (admin ko'rinishi uchun)."""
+    db = await get_db()
+    async with db.execute(
+        "SELECT status, COUNT(*) c FROM test_assignments GROUP BY status"
+    ) as cur:
+        rows = await cur.fetchall()
+    return {r["status"]: r["c"] for r in rows}
+
+
+async def recruitment_sync_counts() -> dict:
+    """Recruitment natijalarini 2-botga yuborish holati bo'yicha sanoq."""
+    db = await get_db()
+    async with db.execute(
+        "SELECT sync_status, COUNT(*) c FROM results "
+        "WHERE sync_status IS NOT NULL GROUP BY sync_status"
+    ) as cur:
+        rows = await cur.fetchall()
+    return {r["sync_status"]: r["c"] for r in rows}
+
+
+# ==================== RECRUITMENT: RESULTS ====================
+async def save_recruitment_result(*, telegram_id: int, test_id: int, total: int,
+                                  correct: int, wrong: int, percent: float, passed: int,
+                                  candidate_id: int, vacancy_id, assignment_id: int,
+                                  external_application_id, started_at: str,
+                                  completed_at: str) -> int:
+    """Recruitment testi natijasini saqlaydi. sync_status='pending' bilan yaratiladi
+    (keyin 2-botga yuboriladi). user_id = telegram_id — eski so'rovlar ham ishlaydi."""
+    db = await get_db()
+    cur = await db.execute(
+        """INSERT INTO results
+             (user_id, test_id, total, correct, wrong, percent, passed, created_at,
+              candidate_id, telegram_id, vacancy_id, assignment_id,
+              external_application_id, started_at, completed_at,
+              sync_status, sync_attempts, next_sync_at)
+           VALUES (?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?, 'pending', 0, ?)""",
+        (telegram_id, test_id, total, correct, wrong, percent, passed, _now(),
+         candidate_id, telegram_id, vacancy_id, assignment_id,
+         external_application_id, started_at, completed_at, _now()),
+    )
+    await db.commit()
+    return cur.lastrowid
+
+
+async def get_result(result_id: int):
+    db = await get_db()
+    async with db.execute("SELECT * FROM results WHERE id=?", (result_id,)) as cur:
+        return await cur.fetchone()
+
+
+async def get_pending_sync_results(limit: int = 20):
+    """2-botga yuborilishi kerak bo'lgan (pending, vaqti kelgan) natijalar."""
+    db = await get_db()
+    async with db.execute(
+        """SELECT * FROM results
+           WHERE sync_status='pending'
+             AND (next_sync_at IS NULL OR next_sync_at <= ?)
+           ORDER BY id ASC LIMIT ?""",
+        (_now(), limit),
+    ) as cur:
+        return await cur.fetchall()
+
+
+async def mark_result_synced(result_id: int):
+    db = await get_db()
+    await db.execute(
+        "UPDATE results SET sync_status='sent', next_sync_at=NULL WHERE id=?",
+        (result_id,),
+    )
+    await db.commit()
+
+
+async def schedule_result_retry(result_id: int, attempts: int, next_sync_at,
+                                failed: bool = False):
+    """Yuborish muvaffaqiyatsiz bo'lsa: attempts oshiriladi, keyingi urinish vaqti
+    belgilanadi. failed=True bo'lsa (urinishlar tugagan) status 'failed' bo'ladi."""
+    db = await get_db()
+    status = "failed" if failed else "pending"
+    await db.execute(
+        "UPDATE results SET sync_status=?, sync_attempts=?, next_sync_at=? WHERE id=?",
+        (status, attempts, next_sync_at, result_id),
+    )
+    await db.commit()

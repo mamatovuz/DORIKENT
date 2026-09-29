@@ -33,6 +33,21 @@ DEFAULT_TIME_PER_QUESTION = _int("DEFAULT_TIME_PER_QUESTION", 30)
 DEFAULT_ALLOW_RETAKE = _int("DEFAULT_ALLOW_RETAKE", 1)
 DEFAULT_SHOW_RESULT = _int("DEFAULT_SHOW_RESULT", 1)
 
+# ==================== RECRUITMENT INTEGRATSIYASI ====================
+# 1-bot ichidagi API server (2-bot shu API orqali bog'lanadi).
+TEST_API_SECRET = os.getenv("TEST_API_SECRET", "").strip()
+API_HOST = os.getenv("API_HOST", "0.0.0.0").strip()
+API_PORT = _int("API_PORT", 8080)
+# API serverni umuman ishga tushirish kerakmi (0 = faqat Telegram bot)
+API_ENABLED = _int("API_ENABLED", 1)
+
+# Bot username — deep link yasash uchun (masalan: https://t.me/<username>?start=test_<id>)
+BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
+
+# 2-bot (Ish topish boti) API — natijani yuborish uchun.
+RECRUITMENT_API_URL = os.getenv("RECRUITMENT_API_URL", "").strip().rstrip("/")
+RECRUITMENT_API_SECRET = os.getenv("RECRUITMENT_API_SECRET", "").strip()
+
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 
 # Agar DB_PATH papka ichida bo'lsa (masalan Railway volume: /data/bot.db),

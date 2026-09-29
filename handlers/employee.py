@@ -2,7 +2,7 @@
 from datetime import date, datetime, timedelta
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
@@ -10,6 +10,7 @@ import config
 import db
 import keyboards as kb
 from states import Registration, ProfileEdit
+from . import recruitment
 
 router = Router()
 
@@ -126,8 +127,16 @@ async def _send_profile(message: Message, user):
 
 # ==================== /start ====================
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
+async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     await state.clear()
+
+    # Recruitment deep link (2-botdan): /start test_<assignment_id>.
+    # Nomzod employee sifatida ro'yxatga OLINMAYDI — shu sabab _register'dan oldin.
+    payload = (command.args or "").strip()
+    if payload.startswith("test_"):
+        if await recruitment.start_from_deeplink(message, state, payload):
+            return
+
     role = await _register(message)
 
     if role == "admin":

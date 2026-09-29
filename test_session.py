@@ -5,6 +5,7 @@ javob variantlari random, savollar random.
 import asyncio
 import random
 import logging
+from datetime import datetime
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -22,12 +23,16 @@ def get_session(user_id: int):
 
 
 class Session:
-    def __init__(self, bot: Bot, chat_id: int, user_id: int, test, questions):
+    def __init__(self, bot: Bot, chat_id: int, user_id: int, test, questions,
+                 assignment=None):
         self.bot = bot
         self.chat_id = chat_id
         self.user_id = user_id
         self.test = test
         self.questions = questions          # tayyorlangan savollar
+        # Recruitment (2-bot) testi bo'lsa — assignment yozuvi, aks holda None.
+        self.assignment = assignment
+        self.started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.index = 0
         self.correct = 0
         self.wrong = 0
@@ -122,6 +127,10 @@ class Session:
         percent = round((self.correct / total) * 100, 1) if total else 0.0
         passed = 1 if percent >= self.test["pass_percent"] else 0
 
+        if self.assignment is not None:
+            await self._finish_recruitment(total, percent, passed)
+            return
+
         await db.save_result(self.user_id, self.test["id"], total,
                              self.correct, self.wrong, percent, passed)
         await db.mark_assignment_done(self.test["id"], self.user_id)
@@ -150,6 +159,45 @@ class Session:
         await self.bot.send_message(self.chat_id, text)
         _sessions.pop(self.user_id, None)
 
+    async def _finish_recruitment(self, total: int, percent: float, passed: int):
+        """Recruitment (2-bot) testi yakuni: natijani saqlaydi, assignmentni
+        yopadi va natijani 2-botga yuborishga qo'yadi."""
+        import services.result_sync as result_sync
+
+        a = self.assignment
+        completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        result_id = await db.save_recruitment_result(
+            telegram_id=self.user_id,
+            test_id=self.test["id"],
+            total=total,
+            correct=self.correct,
+            wrong=self.wrong,
+            percent=percent,
+            passed=passed,
+            candidate_id=a["candidate_id"],
+            vacancy_id=a["vacancy_id"],
+            assignment_id=a["id"],
+            external_application_id=a["external_application_id"],
+            started_at=self.started_at,
+            completed_at=completed_at,
+        )
+        await db.set_assignment_completed(a["id"], result_id)
+
+        head = "🟢 Siz testdan o'tdingiz." if passed else "🔴 Siz testdan o'ta olmadingiz."
+        text = (
+            "🎉 <b>Test yakunlandi!</b>\n\n"
+            f"📝 Test: {self.test['title']}\n\n"
+            f"✅ To'g'ri: {self.correct}\n"
+            f"❌ Noto'g'ri: {self.wrong}\n\n"
+            f"🎯 Natija: {percent}%\n\n"
+            f"{head}"
+        )
+        await self.bot.send_message(self.chat_id, text)
+        _sessions.pop(self.user_id, None)
+
+        # Natijani 2-botga darhol yuborishga urinamiz (fon tsikli — himoya to'ri).
+        asyncio.create_task(result_sync.send_result_now(result_id))
+
 
 def _prepare_questions(all_questions_with_opts, count: int):
     """Random savollar + random variantlar tayyorlaydi."""
@@ -162,8 +210,12 @@ def _prepare_questions(all_questions_with_opts, count: int):
     return prepared
 
 
-async def start_session(bot: Bot, chat_id: int, user_id: int, test) -> tuple[bool, str]:
-    """Sessiyani boshlaydi. Qaytadi (muvaffaqiyat, xabar)."""
+async def start_session(bot: Bot, chat_id: int, user_id: int, test,
+                        assignment=None) -> tuple[bool, str]:
+    """Sessiyani boshlaydi. Qaytadi (muvaffaqiyat, xabar).
+
+    assignment berilsa — bu recruitment (2-bot) testi; natija assignment bilan
+    bog'lanadi va 2-botga yuboriladi."""
     if user_id in _sessions:
         return False, "Sizda tugallanmagan test bor."
 
@@ -183,7 +235,9 @@ async def start_session(bot: Bot, chat_id: int, user_id: int, test) -> tuple[boo
         return False, "Savollar variantlari to'liq emas."
 
     prepared = _prepare_questions(with_opts, test["questions_per_test"])
-    sess = Session(bot, chat_id, user_id, test, prepared)
+    sess = Session(bot, chat_id, user_id, test, prepared, assignment=assignment)
     _sessions[user_id] = sess
+    if assignment is not None:
+        await db.set_assignment_started(assignment["id"])
     await sess.send_current()
     return True, ""

@@ -636,6 +636,41 @@ async def pick_send(call: CallbackQuery, state: FSMContext, bot: Bot):
     )
 
 
+# ==================== RECRUITMENT (2-bot integratsiyasi) ====================
+@router.message(F.text == "🔗 Recruitment")
+async def recruitment_overview(message: Message):
+    """Vakansiyalarga biriktirish uchun test ID'lari va integratsiya holati.
+    (2-botdagi vakansiyalar bu yerga KO'CHIRILMAYDI — faqat 1-bot ma'lumoti.)"""
+    tests = await db.get_active_tests()
+    a_counts = await db.recruitment_assignment_counts()
+    s_counts = await db.recruitment_sync_counts()
+
+    lines = ["🔗 <b>Recruitment (Ish topish boti) integratsiyasi</b>\n"]
+    lines.append("Quyidagi <b>test_id</b> larni 2-botda vakansiyaga biriktiring:\n")
+    if not tests:
+        lines.append("⚪️ Hozircha aktiv test yo'q.")
+    else:
+        for t in tests:
+            q = await db.count_questions(t["id"])
+            n = min(t["questions_per_test"], q)
+            lines.append(
+                f"• <b>test_id={t['id']}</b> — {t['title']}\n"
+                f"   Savollar: {n} ta · O'tish bali: {t['pass_percent']}% · "
+                f"{'🟢 faol' if t['is_active'] else '⚪️'}"
+            )
+
+    def _fmt(counts: dict) -> str:
+        return ", ".join(f"{k}: {v}" for k, v in counts.items()) or "—"
+
+    lines.append("\n<b>📥 Tayinlangan testlar:</b> " + _fmt(a_counts))
+    lines.append("<b>📤 Natija sync:</b> " + _fmt(s_counts))
+    if config.RECRUITMENT_API_URL:
+        lines.append("\n2-bot API: ✅ sozlangan")
+    else:
+        lines.append("\n2-bot API: ⚠️ RECRUITMENT_API_URL bo'sh (natijalar 'pending' turadi)")
+    await message.answer("\n".join(lines))
+
+
 # ==================== QO'LLANMA (PDF) ====================
 @router.message(F.text == "📖 Qo'llanma")
 async def send_guide(message: Message):

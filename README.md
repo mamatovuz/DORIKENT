@@ -90,12 +90,70 @@ keyboards.py       — barcha tugmalar
 states.py          — FSM holatlar
 test_session.py    — test topshirish sessiyasi (taymer, random)
 handlers/
-  employee.py      — xodim: /start, test, natijalar
+  employee.py      — xodim: /start (+ recruitment deep link), test, natijalar
   test_taking.py   — test boshlash va javob berish
-  admin.py         — admin panel (barcha bo'limlar)
+  admin.py         — admin panel (barcha bo'limlar + 🔗 Recruitment)
+  recruitment.py   — 2-bot nomzodlari uchun deep link oqimi
+api/               — 2-bot uchun REST API (FastAPI)
+  app.py           — FastAPI ilova + uvicorn ishga tushirish
+  routes.py        — endpointlar (/api/v1/...)
+  schemas.py       — Pydantic sxemalar (validatsiya)
+  auth.py          — Bearer / X-API-Key autentifikatsiya
+  service.py       — biznes-mantiq (db bilan bog'lash)
+services/
+  result_sync.py   — natijani 2-botga yuborish (retry + idempotency)
 ```
 
 Ma'lumotlar `bot.db` (SQLite) faylida saqlanadi.
+
+---
+
+## 🔗 Recruitment integratsiyasi (2-bot / Ish topish boti)
+
+1-bot Telegram polling bilan **bir vaqtda** REST API server ham ishga tushiradi
+(`python bot.py`). 2-bot faqat shu API orqali bog'lanadi — hech qachon 1-bot
+SQLite fayliga to'g'ridan-to'g'ri ulanmaydi. Bazalar birlashmaydi.
+
+### `.env` sozlamalari
+```
+TEST_API_SECRET=kuchli_maxfiy_kalit     # API kaliti (majburiy)
+API_HOST=0.0.0.0
+API_PORT=8080
+API_ENABLED=1                            # 0 = faqat Telegram bot
+BOT_USERNAME=DoriKentTestBot             # deep link uchun (@ siz)
+RECRUITMENT_API_URL=https://2bot.example.com   # natija yuboriladigan manzil
+RECRUITMENT_API_SECRET=...               # 2-bot API kaliti
+```
+
+### Endpointlar (`/api/v1`)
+Har bir so'rovda `Authorization: Bearer <TEST_API_SECRET>` yoki
+`X-API-Key: <TEST_API_SECRET>` bo'lishi kerak (health'dan tashqari).
+
+| Method | Path              | Vazifa |
+|--------|-------------------|--------|
+| GET    | `/health`         | Server holati (auth kerak emas) |
+| GET    | `/tests`          | Faqat aktiv testlar ro'yxati |
+| POST   | `/test/assign`    | Nomzodga test tayinlash → `assignment_id` |
+
+`POST /test/assign` tanasi:
+```json
+{"candidate_id": 482, "telegram_id": 123456789, "vacancy_id": 25,
+ "test_id": 7, "external_application_id": 901}
+```
+
+### Oqim
+1. 2-bot `POST /test/assign` → 1-bot `test_assignments` jadvaliga yozadi va
+   `assignment_id` (+ tayyor `deep_link`) qaytaradi.
+2. Nomzod deep link orqali kiradi: `https://t.me/<BOT_USERNAME>?start=test_<assignment_id>`.
+   1-bot Telegram ID mosligini tekshiradi ("Bu test sizga tegishli emas").
+3. Nomzod testni topshiradi (mavjud sessiya tizimi, taymer, random).
+4. Natija 1-bot DB'siga saqlanadi (`sync_status='pending'`), so'ng 2-botga
+   `POST <RECRUITMENT_API_URL>/api/v1/test-results` orqali yuboriladi.
+5. Yuborish muvaffaqiyatsiz bo'lsa yo'qolmaydi — fon tsikli 1 / 5 / 15 / 60 daqiqada
+   qayta uradi. Idempotency: har natijada `result_key="assignment_<id>"` yuboriladi.
+
+Mavjud xodimlar test tizimi buzilmagan — recruitment testlari **faqat** assignment
+mavjud bo'lganda ishlaydi. Oddiy xodimlar `/start` orqali avvalgidek ishlaydi.
 
 ---
 
