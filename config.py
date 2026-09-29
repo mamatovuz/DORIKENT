@@ -37,7 +37,8 @@ DEFAULT_SHOW_RESULT = _int("DEFAULT_SHOW_RESULT", 1)
 # 1-bot ichidagi API server (2-bot shu API orqali bog'lanadi).
 TEST_API_SECRET = os.getenv("TEST_API_SECRET", "").strip()
 API_HOST = os.getenv("API_HOST", "0.0.0.0").strip()
-API_PORT = _int("API_PORT", 8080)
+# Railway/Heroku kabi platformalar $PORT beradi — uni ham qo'llab-quvvatlaymiz.
+API_PORT = int(os.getenv("API_PORT", os.getenv("PORT", "8080")) or "8080")
 # API serverni umuman ishga tushirish kerakmi (0 = faqat Telegram bot)
 API_ENABLED = _int("API_ENABLED", 1)
 
